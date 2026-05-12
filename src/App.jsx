@@ -69,8 +69,9 @@ const App = () => {
   const [draftStartingCapital, setDraftStartingCapital] = useState(STARTING_CAPITAL);
   const [draftTargetCapital, setDraftTargetCapital] = useState(TARGET_CAPITAL);
   const [isChallengeOpen, setIsChallengeOpen] = useState(false);
-  const [lastChallenge, setLastChallenge] = useState(null);
-  const fileInputRef = useRef(null);
+  const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
+  const [editingTrade, setEditingTrade] = useState(null);
+  const [newTrade, setNewTrade] = useState({ id: '', symbol: '', type: 'buy', volume: 0.01, profit: 0, time: '' });
 
   const CHALLENGE_STORAGE_KEY = '500k-dashboard:active-challenge';
   const LAST_CHALLENGE_STORAGE_KEY = '500k-dashboard:last-challenge';
@@ -104,18 +105,70 @@ const App = () => {
     return safeParseJSON(window.localStorage.getItem(LAST_CHALLENGE_STORAGE_KEY));
   };
 
-  const restoreLastChallenge = () => {
-    const saved = loadLastChallenge();
-    if (!saved) {
-      setImportStatus('No archived challenge found to restore.');
+  const openAddModal = () => {
+    setEditingTrade(null);
+    setNewTrade({ id: Date.now().toString(), symbol: '', type: 'buy', volume: 0.01, profit: 0, time: new Date().toISOString().split('T')[0] });
+    setIsTradeModalOpen(true);
+  };
+
+  const openEditModal = (trade) => {
+    setEditingTrade(trade);
+    setNewTrade({ ...trade });
+    setIsTradeModalOpen(true);
+  };
+
+  const closeTradeModal = () => {
+    setIsTradeModalOpen(false);
+    setEditingTrade(null);
+  };
+
+  const handleSaveTrade = async () => {
+    const tradeData = {
+      id: parseInt(newTrade.id, 10),
+      symbol: newTrade.symbol.trim(),
+      type: newTrade.type,
+      volume: parseFloat(newTrade.volume),
+      profit: parseFloat(newTrade.profit),
+      time: newTrade.time,
+    };
+
+    if (!tradeData.id || !tradeData.symbol || !tradeData.time) {
+      setImportStatus('Please fill in all required fields.');
       return;
     }
 
-    setChallengeTitle(saved.challengeTitle || '$500 → $100K Challenge');
-    setStartingCapital(saved.startingCapital || STARTING_CAPITAL);
-    setTargetCapital(saved.targetCapital || TARGET_CAPITAL);
-    setTradeHistory(saved.tradeHistory || []);
-    setImportStatus('Previous challenge restored from archive.');
+    try {
+      if (editingTrade) {
+        const { error } = await supabase
+          .from('trades')
+          .update(tradeData)
+          .eq('id', editingTrade.id);
+        if (error) throw error;
+        setTradeHistory((prev) => prev.map((t) => (t.id === editingTrade.id ? tradeData : t)));
+        setImportStatus('Trade updated successfully.');
+      } else {
+        const { error } = await supabase.from('trades').insert(tradeData);
+        if (error) throw error;
+        setTradeHistory((prev) => [...prev, tradeData].sort((a, b) => a.id - b.id));
+        setImportStatus('Trade added successfully.');
+      }
+      closeTradeModal();
+    } catch (error) {
+      setImportStatus(`Failed to save trade: ${error.message}`);
+    }
+  };
+
+  const handleDeleteTrade = async (tradeId) => {
+    if (!confirm('Are you sure you want to delete this trade?')) return;
+
+    try {
+      const { error } = await supabase.from('trades').delete().eq('id', tradeId);
+      if (error) throw error;
+      setTradeHistory((prev) => prev.filter((t) => t.id !== tradeId));
+      setImportStatus('Trade deleted successfully.');
+    } catch (error) {
+      setImportStatus(`Failed to delete trade: ${error.message}`);
+    }
   };
 
   useEffect(() => {
@@ -544,6 +597,96 @@ const App = () => {
           </div>
         )}
 
+        {isTradeModalOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b border-slate-200">
+                <h3 className="text-lg font-bold text-slate-900">
+                  {editingTrade ? 'Edit Trade' : 'Add New Trade'}
+                </h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Trade ID</label>
+                  <input
+                    type="number"
+                    value={newTrade.id}
+                    onChange={(e) => setNewTrade({ ...newTrade, id: e.target.value })}
+                    disabled={!!editingTrade}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400 disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Symbol</label>
+                  <input
+                    type="text"
+                    value={newTrade.symbol}
+                    onChange={(e) => setNewTrade({ ...newTrade, symbol: e.target.value })}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Type</label>
+                  <select
+                    value={newTrade.type}
+                    onChange={(e) => setNewTrade({ ...newTrade, type: e.target.value })}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400"
+                  >
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Volume</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newTrade.volume}
+                    onChange={(e) => setNewTrade({ ...newTrade, volume: e.target.value })}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Profit</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newTrade.profit}
+                    onChange={(e) => setNewTrade({ ...newTrade, profit: e.target.value })}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Date</label>
+                  <input
+                    type="date"
+                    value={newTrade.time}
+                    onChange={(e) => setNewTrade({ ...newTrade, time: e.target.value })}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-3 border-t border-slate-200 px-6 py-4 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeTradeModal}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveTrade}
+                  className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  {editingTrade ? 'Update Trade' : 'Add Trade'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Current Balance"
@@ -667,7 +810,15 @@ const App = () => {
               <h3 className="text-lg font-bold flex items-center gap-2">
                 <History className="w-5 h-5 text-slate-500" /> Live Ledger
               </h3>
-              <p className="text-xs font-bold text-slate-400">{tradeHistory.length} Trades Logged</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openAddModal}
+                  className="px-3 py-1 bg-slate-900 text-white text-xs font-bold rounded-xl hover:bg-slate-800 transition-all"
+                >
+                  Add Trade
+                </button>
+                <p className="text-xs font-bold text-slate-400">{tradeHistory.length} Trades Logged</p>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto max-h-[250px] pr-2 custom-scrollbar">
               <table className="w-full text-left">
@@ -677,6 +828,7 @@ const App = () => {
                     <th className="pb-3 px-1">Asset</th>
                     <th className="pb-3 px-1">Type</th>
                     <th className="pb-3 px-1 text-right">Net Profit</th>
+                    <th className="pb-3 px-1 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm divide-y divide-slate-100">
@@ -691,6 +843,28 @@ const App = () => {
                       </td>
                       <td className={`py-3 px-1 text-right font-black ${t.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                         {t.profit >= 0 ? `+$${t.profit.toFixed(2)}` : `-$${Math.abs(t.profit).toFixed(2)}`}
+                      </td>
+                      <td className="py-3 px-1 text-right">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => openEditModal(t)}
+                            className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                            title="Edit trade"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTrade(t.id)}
+                            className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                            title="Delete trade"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
