@@ -61,9 +61,79 @@ const App = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [importStatus, setImportStatus] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [challengeTitle, setChallengeTitle] = useState('$500 → $100K Challenge');
+  const [startingCapital, setStartingCapital] = useState(STARTING_CAPITAL);
+  const [targetCapital, setTargetCapital] = useState(TARGET_CAPITAL);
+  const [draftChallengeTitle, setDraftChallengeTitle] = useState('$500 → $100K Challenge');
+  const [draftStartingCapital, setDraftStartingCapital] = useState(STARTING_CAPITAL);
+  const [draftTargetCapital, setDraftTargetCapital] = useState(TARGET_CAPITAL);
+  const [isChallengeOpen, setIsChallengeOpen] = useState(false);
+  const [lastChallenge, setLastChallenge] = useState(null);
   const fileInputRef = useRef(null);
 
+  const CHALLENGE_STORAGE_KEY = '500k-dashboard:active-challenge';
+  const LAST_CHALLENGE_STORAGE_KEY = '500k-dashboard:last-challenge';
+
+  const safeParseJSON = (value) => {
+    try {
+      return value ? JSON.parse(value) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const saveActiveChallenge = (state) => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(CHALLENGE_STORAGE_KEY, JSON.stringify(state));
+  };
+
+  const loadActiveChallenge = () => {
+    if (typeof window === 'undefined') return null;
+    return safeParseJSON(window.localStorage.getItem(CHALLENGE_STORAGE_KEY));
+  };
+
+  const saveLastChallenge = (state) => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(LAST_CHALLENGE_STORAGE_KEY, JSON.stringify(state));
+    setLastChallenge(state);
+  };
+
+  const loadLastChallenge = () => {
+    if (typeof window === 'undefined') return null;
+    return safeParseJSON(window.localStorage.getItem(LAST_CHALLENGE_STORAGE_KEY));
+  };
+
+  const restoreLastChallenge = () => {
+    const saved = loadLastChallenge();
+    if (!saved) {
+      setImportStatus('No archived challenge found to restore.');
+      return;
+    }
+
+    setChallengeTitle(saved.challengeTitle || '$500 → $100K Challenge');
+    setStartingCapital(saved.startingCapital || STARTING_CAPITAL);
+    setTargetCapital(saved.targetCapital || TARGET_CAPITAL);
+    setTradeHistory(saved.tradeHistory || []);
+    setImportStatus('Previous challenge restored from archive.');
+  };
+
   useEffect(() => {
+    const savedActive = loadActiveChallenge();
+    const savedLast = loadLastChallenge();
+
+    if (savedLast) {
+      setLastChallenge(savedLast);
+    }
+
+    if (savedActive) {
+      setChallengeTitle(savedActive.challengeTitle || '$500 → $100K Challenge');
+      setStartingCapital(savedActive.startingCapital || STARTING_CAPITAL);
+      setTargetCapital(savedActive.targetCapital || TARGET_CAPITAL);
+      setTradeHistory(savedActive.tradeHistory || []);
+      setIsLoading(false);
+      return;
+    }
+
     const fetchTrades = async () => {
       if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
         setImportStatus('Supabase credentials missing. Use .env or Netlify env vars.');
@@ -92,6 +162,48 @@ const App = () => {
 
     fetchTrades();
   }, []);
+
+  const openChallengeModal = () => {
+    setDraftChallengeTitle(challengeTitle);
+    setDraftStartingCapital(startingCapital);
+    setDraftTargetCapital(targetCapital);
+    setIsChallengeOpen(true);
+  };
+
+  const closeChallengeModal = () => {
+    setIsChallengeOpen(false);
+  };
+
+  const startNewChallenge = () => {
+    if (tradeHistory.length > 0) {
+      saveLastChallenge({
+        challengeTitle,
+        startingCapital,
+        targetCapital,
+        tradeHistory,
+      });
+    }
+
+    const nextStarting = Number(draftStartingCapital) || 0;
+    const nextTarget = Number(draftTargetCapital) || 0;
+    const nextTitle = draftChallengeTitle.trim() || 'New Challenge';
+
+    setStartingCapital(nextStarting);
+    setTargetCapital(nextTarget);
+    setChallengeTitle(nextTitle);
+    setTradeHistory([]);
+    setImportStatus(`Started a fresh challenge: ${nextTitle}`);
+    setIsChallengeOpen(false);
+  };
+
+  useEffect(() => {
+    saveActiveChallenge({
+      challengeTitle,
+      startingCapital,
+      targetCapital,
+      tradeHistory,
+    });
+  }, [challengeTitle, startingCapital, targetCapital, tradeHistory]);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -148,14 +260,14 @@ const App = () => {
   };
 
   const metrics = useMemo(() => {
-    let currentBalance = STARTING_CAPITAL;
-    const equityCurve = [{ time: 'Start', balance: STARTING_CAPITAL }];
+    let currentBalance = startingCapital;
+    const equityCurve = [{ time: 'Start', balance: startingCapital }];
     let grossProfit = 0;
     let grossLoss = 0;
     let wins = 0;
     let losses = 0;
     let maxDD = 0;
-    let peak = STARTING_CAPITAL;
+    let peak = startingCapital;
 
     tradeHistory.forEach((t, index) => {
       currentBalance += t.profit;
@@ -178,11 +290,11 @@ const App = () => {
     const avgLoss = losses > 0 ? grossLoss / losses : 0;
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit;
     const expectancy = totalTrades > 0 ? (winRate / 100) * avgWin - ((1 - winRate / 100) * avgLoss) : 0;
-    const progress = (currentBalance / TARGET_CAPITAL) * 100;
+    const progress = targetCapital > 0 ? (currentBalance / targetCapital) * 100 : 0;
 
     return {
       balance: currentBalance,
-      left: TARGET_CAPITAL - currentBalance,
+      left: targetCapital - currentBalance,
       progress,
       winRate,
       profitFactor,
@@ -191,7 +303,7 @@ const App = () => {
       equityCurve,
       totalTrades,
     };
-  }, [tradeHistory]);
+  }, [tradeHistory, startingCapital, targetCapital]);
 
   const dailyPnL = useMemo(() => {
     const map = {};
@@ -209,7 +321,7 @@ const App = () => {
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900">$500 → $100K Dashboard</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900">{challengeTitle}</h1>
             <p className="text-slate-500 mt-1 flex items-center gap-2">
               <Activity className="w-4 h-4 text-blue-500" />
               Real-time Trading Performance
@@ -217,6 +329,21 @@ const App = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={openChallengeModal}
+              className="flex items-center gap-2 border border-slate-200 bg-white text-slate-900 px-4 py-2 rounded-2xl text-sm hover:bg-slate-50 transition-all"
+            >
+              <Target size={16} />
+              Start New Challenge
+            </button>
+            {lastChallenge && (
+              <button
+                onClick={restoreLastChallenge}
+                className="flex items-center gap-2 border border-slate-200 bg-slate-50 text-slate-900 px-4 py-2 rounded-2xl text-sm hover:bg-slate-100 transition-all"
+              >
+                Restore Last Challenge
+              </button>
+            )}
             <div className="flex items-center gap-2">
               {importStatus && (
                 <div className="bg-blue-50 border border-blue-100 text-blue-700 px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 animate-fade-in">
@@ -252,18 +379,90 @@ const App = () => {
           </div>
         </div>
 
+        {isChallengeOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+            <div className="w-full max-w-xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+              <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Challenge Setup</p>
+                  <h2 className="text-xl font-bold text-slate-900">Start a new challenge</h2>
+                </div>
+                <button onClick={closeChallengeModal} className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="space-y-4 px-6 py-5">
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Challenge Name</label>
+                  <input
+                    type="text"
+                    value={draftChallengeTitle}
+                    onChange={(e) => setDraftChallengeTitle(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400"
+                  />
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-700">Starting Capital</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="10"
+                      value={draftStartingCapital}
+                      onChange={(e) => setDraftStartingCapital(e.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-700">Target Capital</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={draftTargetCapital}
+                      onChange={(e) => setDraftTargetCapital(e.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-blue-400"
+                    />
+                  </div>
+                </div>
+
+                <p className="text-sm text-slate-500">
+                  Starting a new challenge will clear the current ledger view and let you import fresh CSV results from scratch.
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 border-t border-slate-200 px-6 py-4 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeChallengeModal}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={startNewChallenge}
+                  className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  Start Challenge
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Current Balance"
             value={`$${metrics.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-            subValue={`Total Gain: $${(metrics.balance - STARTING_CAPITAL).toFixed(2)}`}
+            subValue={`Total Gain: $${(metrics.balance - startingCapital).toFixed(2)}`}
             icon={<TrendingUp className="text-emerald-500" />}
-            trend={((metrics.balance - STARTING_CAPITAL) / STARTING_CAPITAL * 100).toFixed(1)}
+            trend={startingCapital > 0 ? ((metrics.balance - startingCapital) / startingCapital * 100).toFixed(1) : '0.0'}
           />
           <StatCard
             title="Roadmap Goal"
             value={`$${metrics.left.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-            subValue="Left to $100K"
+            subValue={`Left to $${targetCapital.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
             icon={<Target className="text-blue-500" />}
             progress={metrics.progress}
           />
