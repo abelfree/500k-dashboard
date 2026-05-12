@@ -214,7 +214,7 @@ const App = () => {
     headerRow.forEach((cell, index) => {
       const label = normalizeHeader(cell);
 
-      if (/ticket|order|ticket #|order #/.test(label)) {
+      if (/position|ticket|order|ticket #|order #/.test(label)) {
         columnMap.id = index;
       }
       if (/symbol|item|instrument|pair/.test(label)) {
