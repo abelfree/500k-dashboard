@@ -316,12 +316,30 @@ const App = () => {
       });
 
       if (newTrades.length > 0) {
-        const { error } = await supabase.from('trades').insert(newTrades);
-        if (error) {
-          setImportStatus(`Supabase insert failed: ${error.message}`);
+        const tradeIds = newTrades.map((trade) => trade.id);
+        const { data: existingRows, error: existingError } = await supabase
+          .from('trades')
+          .select('id')
+          .in('id', tradeIds);
+
+        if (existingError) {
+          setImportStatus(`Supabase duplicate check failed: ${existingError.message}`);
         } else {
-          setTradeHistory((prev) => [...prev, ...newTrades].sort((a, b) => a.id - b.id));
-          setImportStatus(`Added ${newTrades.length} new trades. Skipped ${skipped} duplicates.`);
+          const existingIdsFromDb = new Set(existingRows?.map((row) => row.id) ?? []);
+          const filteredTrades = newTrades.filter((trade) => !existingIdsFromDb.has(trade.id));
+          skipped += newTrades.length - filteredTrades.length;
+
+          if (filteredTrades.length > 0) {
+            const { error } = await supabase.from('trades').insert(filteredTrades);
+            if (error) {
+              setImportStatus(`Supabase insert failed: ${error.message}`);
+            } else {
+              setTradeHistory((prev) => [...prev, ...filteredTrades].sort((a, b) => a.id - b.id));
+              setImportStatus(`Added ${filteredTrades.length} new trades. Skipped ${skipped} duplicates.`);
+            }
+          } else {
+            setImportStatus(`No new trades to insert. Skipped ${skipped} duplicates.`);
+          }
         }
       } else {
         setImportStatus(`No new trades found. Skipped ${skipped} duplicates or malformed rows.`);
