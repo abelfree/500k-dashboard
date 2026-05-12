@@ -158,16 +158,19 @@ const App = () => {
     }
   };
 
-  const handleDeleteTrade = async (tradeId) => {
-    if (!confirm('Are you sure you want to delete this trade?')) return;
+  const handleDuplicateTrade = async (trade) => {
+    const duplicatedTrade = {
+      ...trade,
+      id: Date.now(), // Generate new unique ID
+    };
 
     try {
-      const { error } = await supabase.from('trades').delete().eq('id', tradeId);
+      const { error } = await supabase.from('trades').insert(duplicatedTrade);
       if (error) throw error;
-      setTradeHistory((prev) => prev.filter((t) => t.id !== tradeId));
-      setImportStatus('Trade deleted successfully.');
+      setTradeHistory((prev) => [...prev, duplicatedTrade].sort((a, b) => a.id - b.id));
+      setImportStatus('Trade duplicated successfully.');
     } catch (error) {
-      setImportStatus(`Failed to delete trade: ${error.message}`);
+      setImportStatus(`Failed to duplicate trade: ${error.message}`);
     }
   };
 
@@ -853,6 +856,15 @@ const App = () => {
                           >
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleDuplicateTrade(t)}
+                            className="p-1 text-slate-400 hover:text-green-600 transition-colors"
+                            title="Duplicate trade"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                             </svg>
                           </button>
                           <button
