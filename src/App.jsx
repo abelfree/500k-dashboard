@@ -1,0 +1,454 @@
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  Cell,
+} from 'recharts';
+import {
+  TrendingUp,
+  Target,
+  Activity,
+  BarChart3,
+  History,
+  Award,
+  CheckCircle2,
+  ArrowUpRight,
+  ArrowDownRight,
+  Upload,
+  X,
+  FileText,
+} from 'lucide-react';
+import Papa from 'papaparse';
+import { supabase } from './supabaseClient';
+
+const STARTING_CAPITAL = 500.0;
+const TARGET_CAPITAL = 100000.0;
+
+const initialTrades = [
+  { id: 205031048, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: 20.8, time: '2026.04.29' },
+  { id: 205107327, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: 11.94, time: '2026.04.29' },
+  { id: 205107329, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: 11.94, time: '2026.04.29' },
+  { id: 205107331, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: 11.94, time: '2026.04.29' },
+  { id: 205527816, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: -12.44, time: '2026.04.30' },
+  { id: 205527818, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: -12.44, time: '2026.04.30' },
+  { id: 205527820, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: -12.44, time: '2026.04.30' },
+  { id: 205530138, symbol: 'XAUUSD', type: 'buy', volume: 0.01, profit: 5.76, time: '2026.04.30' },
+  { id: 161864817, symbol: 'XAUUSD', type: 'buy', volume: 0.02, profit: 46.54, time: '2026.05.07' },
+  { id: 161864819, symbol: 'XAUUSD', type: 'buy', volume: 0.02, profit: 46.54, time: '2026.05.07' },
+  { id: 162123512, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: -13.06, time: '2026.05.08' },
+  { id: 162123514, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: -13.06, time: '2026.05.08' },
+  { id: 162123516, symbol: 'XAUUSD', type: 'sell', volume: 0.01, profit: -13.06, time: '2026.05.08' },
+  { id: 162153835, symbol: 'XAUUSD', type: 'sell', volume: 0.02, profit: 49.32, time: '2026.05.08' },
+  { id: 162153837, symbol: 'XAUUSD', type: 'sell', volume: 0.02, profit: 49.32, time: '2026.05.08' },
+  { id: 163013146, symbol: 'XAUUSD', type: 'buy', volume: 0.02, profit: -46.72, time: '2026.05.11' },
+  { id: 163013148, symbol: 'XAUUSD', type: 'buy', volume: 0.02, profit: -46.72, time: '2026.05.11' },
+  { id: 163698350, symbol: 'XAUUSD', type: 'buy', volume: 0.02, profit: 45.86, time: '2026.05.12' },
+  { id: 163698352, symbol: 'XAUUSD', type: 'buy', volume: 0.02, profit: 45.86, time: '2026.05.12' },
+  { id: 163698354, symbol: 'XAUUSD', type: 'buy', volume: 0.02, profit: 45.86, time: '2026.05.12' },
+];
+
+const App = () => {
+  const [tradeHistory, setTradeHistory] = useState(initialTrades);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    const fetchTrades = async () => {
+      if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+        setImportStatus('Supabase credentials missing. Use .env or Netlify env vars.');
+        setIsLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('trades')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (error) {
+        setImportStatus(`Failed to load Supabase trades: ${error.message}`);
+      } else if (data?.length) {
+        setTradeHistory(
+          data.map((row) => ({
+            ...row,
+            volume: parseFloat(row.volume),
+            profit: parseFloat(row.profit),
+          }))
+        );
+      }
+      setIsLoading(false);
+    };
+
+    fetchTrades();
+  }, []);
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportStatus('Processing file...');
+
+    Papa.parse(file, {
+      header: false,
+      complete: async (results) => {
+        const rows = results.data;
+        const existingIds = new Set(tradeHistory.map((t) => t.id));
+        const newTrades = [];
+        let skipped = 0;
+
+        rows.forEach((row) => {
+          const posId = parseInt(row[1], 10);
+          const symbol = row[2];
+          const type = row[3]?.toLowerCase();
+          const volume = parseFloat(row[4]);
+          const profit = parseFloat(row[12]);
+          const time = row[0] ? row[0].split(' ')[0] : '';
+
+          if (!Number.isNaN(posId) && symbol && (type === 'buy' || type === 'sell') && !Number.isNaN(profit)) {
+            if (!existingIds.has(posId)) {
+              newTrades.push({ id: posId, symbol, type, volume, profit, time });
+            } else {
+              skipped += 1;
+            }
+          }
+        });
+
+        if (newTrades.length > 0) {
+          const { error } = await supabase.from('trades').insert(newTrades);
+          if (error) {
+            setImportStatus(`Supabase insert failed: ${error.message}`);
+          } else {
+            setTradeHistory((prev) => [...prev, ...newTrades].sort((a, b) => a.id - b.id));
+            setImportStatus(`Added ${newTrades.length} new trades. Skipped ${skipped} duplicates.`);
+          }
+        } else {
+          setImportStatus(`No new trades found. Skipped ${skipped} duplicates or malformed rows.`);
+        }
+
+        setIsImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      },
+      error: (err) => {
+        setImportStatus('Error reading file: ' + err.message);
+        setIsImporting(false);
+      },
+    });
+  };
+
+  const metrics = useMemo(() => {
+    let currentBalance = STARTING_CAPITAL;
+    const equityCurve = [{ time: 'Start', balance: STARTING_CAPITAL }];
+    let grossProfit = 0;
+    let grossLoss = 0;
+    let wins = 0;
+    let losses = 0;
+    let maxDD = 0;
+    let peak = STARTING_CAPITAL;
+
+    tradeHistory.forEach((t, index) => {
+      currentBalance += t.profit;
+      equityCurve.push({ time: `T${index + 1}`, balance: parseFloat(currentBalance.toFixed(2)) });
+      if (t.profit > 0) {
+        grossProfit += t.profit;
+        wins += 1;
+      } else {
+        grossLoss += Math.abs(t.profit);
+        losses += 1;
+      }
+      if (currentBalance > peak) peak = currentBalance;
+      const dd = ((peak - currentBalance) / peak) * 100;
+      if (dd > maxDD) maxDD = dd;
+    });
+
+    const totalTrades = wins + losses;
+    const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+    const avgWin = wins > 0 ? grossProfit / wins : 0;
+    const avgLoss = losses > 0 ? grossLoss / losses : 0;
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit;
+    const expectancy = totalTrades > 0 ? (winRate / 100) * avgWin - ((1 - winRate / 100) * avgLoss) : 0;
+    const progress = (currentBalance / TARGET_CAPITAL) * 100;
+
+    return {
+      balance: currentBalance,
+      left: TARGET_CAPITAL - currentBalance,
+      progress,
+      winRate,
+      profitFactor,
+      expectancy,
+      maxDD,
+      equityCurve,
+      totalTrades,
+    };
+  }, [tradeHistory]);
+
+  const dailyPnL = useMemo(() => {
+    const map = {};
+    tradeHistory.forEach((t) => {
+      map[t.time] = (map[t.time] || 0) + t.profit;
+    });
+    return Object.entries(map).map(([date, pnl]) => ({
+      date: date.split('.').slice(1).join('/'),
+      pnl: parseFloat(pnl.toFixed(2)),
+    }));
+  }, [tradeHistory]);
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8 text-slate-900 font-sans">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900">$500 → $100K Dashboard</h1>
+            <p className="text-slate-500 mt-1 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-blue-500" />
+              Real-time Trading Performance
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              {importStatus && (
+                <div className="bg-blue-50 border border-blue-100 text-blue-700 px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 animate-fade-in">
+                  {importStatus}
+                  <button onClick={() => setImportStatus(null)} className="hover:text-blue-900">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                className="hidden"
+                accept=".csv"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImporting}
+                className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-2xl font-bold text-sm hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50"
+              >
+                <Upload size={16} />
+                {isImporting ? 'Importing...' : 'Sync MT5 Data'}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 bg-white p-2 rounded-2xl shadow-sm border border-slate-200">
+              <div className="px-4 py-2 bg-emerald-50 rounded-xl">
+                <p className="text-xs font-semibold text-emerald-600 uppercase">Phase</p>
+                <p className="text-sm font-bold text-emerald-900">STAGE 1</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            title="Current Balance"
+            value={`$${metrics.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+            subValue={`Total Gain: $${(metrics.balance - STARTING_CAPITAL).toFixed(2)}`}
+            icon={<TrendingUp className="text-emerald-500" />}
+            trend={((metrics.balance - STARTING_CAPITAL) / STARTING_CAPITAL * 100).toFixed(1)}
+          />
+          <StatCard
+            title="Roadmap Goal"
+            value={`$${metrics.left.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            subValue="Left to $100K"
+            icon={<Target className="text-blue-500" />}
+            progress={metrics.progress}
+          />
+          <StatCard
+            title="Win Rate"
+            value={`${metrics.winRate.toFixed(1)}%`}
+            subValue={`${metrics.totalTrades} Total Executions`}
+            icon={<Award className="text-amber-500" />}
+          />
+          <StatCard
+            title="Profit Factor"
+            value={metrics.profitFactor.toFixed(2)}
+            subValue={`Expectancy: $${metrics.expectancy.toFixed(2)}`}
+            icon={<BarChart3 className="text-indigo-500" />}
+            status={metrics.profitFactor > 1.4 ? 'Healthy' : 'Caution'}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-emerald-500" /> Equity Growth
+              </h3>
+              <span className="px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-full">
+                Max DD: {metrics.maxDD.toFixed(1)}%
+              </span>
+            </div>
+            <div className="h-[350px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={metrics.equityCurve}>
+                  <defs>
+                    <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.1} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="time" hide />
+                  <YAxis orientation="right" stroke="#94a3b8" fontSize={12} tickFormatter={(val) => `$${val}`} />
+                  <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                  <Area type="monotone" dataKey="balance" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorEquity)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 space-y-6">
+            <h3 className="text-lg font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-blue-500" /> Challenge Health
+            </h3>
+            <div className="space-y-5">
+              <AssessmentItem
+                label="Risk Management"
+                score={metrics.maxDD < 10 ? 'EXCELLENT' : 'STABLE'}
+                desc={`You are holding a ${metrics.maxDD.toFixed(1)}% drawdown relative to peak.`}
+              />
+              <AssessmentItem
+                label="Win Edge"
+                score={metrics.winRate >= 50 ? 'VERIFIED' : 'NEUTRAL'}
+                desc={`${metrics.winRate.toFixed(1)}% accuracy is aligning with the Balanced Roadmap.`}
+              />
+
+              <div className="mt-8 p-6 bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl relative overflow-hidden">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Challenge Completion</p>
+                <p className="text-3xl font-black">{metrics.progress.toFixed(3)}%</p>
+                <div className="w-full bg-slate-700 h-2 rounded-full mt-4 overflow-hidden">
+                  <div className="bg-blue-500 h-full rounded-full transition-all duration-1000" style={{ width: `${Math.max(metrics.progress, 1)}%` }} />
+                </div>
+                <div className="absolute -bottom-4 -right-4 opacity-10">
+                  <Target className="w-24 h-24" />
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center">
+                <FileText className="w-6 h-6 text-slate-400 mx-auto mb-2" />
+                <p className="text-xs text-slate-500 leading-relaxed font-medium">
+                  Upload your MT5 "ReportHistory" CSV to sync latest results and avoid manual entry.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
+            <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-indigo-500" /> Daily Gains
+            </h3>
+            <div className="h-[250px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyPnL}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} axisLine={false} tickLine={false} />
+                  <YAxis stroke="#94a3b8" fontSize={11} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '12px', border: 'none' }} />
+                  <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
+                    {dailyPnL.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <History className="w-5 h-5 text-slate-500" /> Live Ledger
+              </h3>
+              <p className="text-xs font-bold text-slate-400">{tradeHistory.length} Trades Logged</p>
+            </div>
+            <div className="flex-1 overflow-y-auto max-h-[250px] pr-2 custom-scrollbar">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 bg-white text-xs font-bold text-slate-400 uppercase tracking-tight z-10">
+                  <tr>
+                    <th className="pb-3 px-1">ID</th>
+                    <th className="pb-3 px-1">Asset</th>
+                    <th className="pb-3 px-1">Type</th>
+                    <th className="pb-3 px-1 text-right">Net Profit</th>
+                  </tr>
+                </thead>
+                <tbody className="text-sm divide-y divide-slate-100">
+                  {tradeHistory.slice().reverse().map((t) => (
+                    <tr key={t.id} className="group hover:bg-slate-50 transition-colors">
+                      <td className="py-3 px-1 text-[11px] text-slate-400 font-mono">#{t.id}</td>
+                      <td className="py-3 px-1 font-semibold">{t.symbol}</td>
+                      <td className="py-3 px-1">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${t.type === 'buy' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                          {t.type}
+                        </span>
+                      </td>
+                      <td className={`py-3 px-1 text-right font-black ${t.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {t.profit >= 0 ? `+$${t.profit.toFixed(2)}` : `-$${Math.abs(t.profit).toFixed(2)}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const StatCard = ({ title, value, subValue, icon, trend, progress, status }) => (
+  <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden group hover:shadow-md transition-all">
+    <div className="flex justify-between items-start mb-4">
+      <div className="p-2.5 bg-slate-50 rounded-2xl group-hover:bg-blue-50 transition-colors">{icon}</div>
+      {trend && (
+        <span className={`flex items-center text-xs font-bold ${parseFloat(trend) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+          {parseFloat(trend) >= 0 ? <ArrowUpRight className="w-3 h-3 mr-0.5" /> : <ArrowDownRight className="w-3 h-3 mr-0.5" />}
+          {trend}%
+        </span>
+      )}
+      {status && (
+        <span className={`text-[10px] font-black px-2 py-1 rounded-full ${status === 'Healthy' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+          {status}
+        </span>
+      )}
+    </div>
+    <div className="space-y-1">
+      <h4 className="text-sm font-semibold text-slate-500">{title}</h4>
+      <p className="text-2xl font-black text-slate-900">{value}</p>
+      <p className="text-xs text-slate-400 font-medium">{subValue}</p>
+    </div>
+    {progress !== undefined && (
+      <div className="mt-4 h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+        <div className="h-full bg-blue-600 rounded-full transition-all duration-1000" style={{ width: `${Math.max(progress, 1)}%` }} />
+      </div>
+    )}
+  </div>
+);
+
+const AssessmentItem = ({ label, score, desc }) => (
+  <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
+    <div className="flex items-center justify-between">
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</p>
+      <span className="text-[10px] font-black text-blue-600">{score}</span>
+    </div>
+    <p className="text-xs font-semibold text-slate-700 leading-relaxed">{desc}</p>
+  </div>
+);
+
+export default App;
