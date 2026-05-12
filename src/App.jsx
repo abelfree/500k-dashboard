@@ -206,6 +206,54 @@ const App = () => {
     });
   }, [challengeTitle, startingCapital, targetCapital, tradeHistory]);
 
+  const normalizeHeader = (value) => String(value || '').trim().toLowerCase();
+
+  const buildColumnMap = (headerRow) => {
+    const columnMap = {};
+
+    headerRow.forEach((cell, index) => {
+      const label = normalizeHeader(cell);
+
+      if (/ticket|order|ticket #|order #/.test(label)) {
+        columnMap.id = index;
+      }
+      if (/symbol|item|instrument|pair/.test(label)) {
+        columnMap.symbol = index;
+      }
+      if (/^type$/.test(label)) {
+        columnMap.type = index;
+      }
+      if (/volume|size|lots/.test(label)) {
+        columnMap.volume = index;
+      }
+      if (/profit|pnl|net profit/.test(label)) {
+        columnMap.profit = index;
+      }
+      if (/open time|open date|close time|close date|time|date/.test(label)) {
+        if (!columnMap.time || /open/.test(label) || /close/.test(label)) {
+          columnMap.time = index;
+        }
+      }
+    });
+
+    return columnMap;
+  };
+
+  const parseNumeric = (value) => {
+    const cleaned = String(value ?? '').replace(/[, ]+/g, '').replace(/[^0-9.\-]/g, '');
+    const parsed = parseFloat(cleaned);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  };
+
+  const detectHeaderRow = (rows) => {
+    return rows.findIndex((row) =>
+      Array.isArray(row) && row.some((cell) => {
+        const label = normalizeHeader(cell);
+        return /ticket|order|symbol|type|volume|profit|pnl/.test(label);
+      })
+    );
+  };
+
   const parseFileRows = async (file) => {
     const isExcel = /\.(xls|xlsx)$/i.test(file.name);
 
@@ -214,12 +262,13 @@ const App = () => {
       const workbook = XLSX.read(data, { type: 'array' });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      return XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
+      return XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
     }
 
     return new Promise((resolve, reject) => {
       Papa.parse(file, {
         header: false,
+        skipEmptyLines: true,
         complete: (results) => resolve(results.data),
         error: (err) => reject(err),
       });
@@ -239,14 +288,23 @@ const App = () => {
       const newTrades = [];
       let skipped = 0;
 
-      rows.forEach((row) => {
-        const rawTime = row[0] != null ? String(row[0]) : '';
-        const time = rawTime.split(' ')[0];
-        const posId = parseInt(row[1], 10);
-        const symbol = row[2];
-        const type = row[3]?.toLowerCase();
-        const volume = parseFloat(row[4]);
-        const profit = parseFloat(row[12]);
+      const headerIndex = detectHeaderRow(rows);
+      const headerMap = headerIndex >= 0 ? buildColumnMap(rows[headerIndex]) : {};
+      const dataRows = headerIndex >= 0 ? rows.slice(headerIndex + 1) : rows;
+
+      dataRows.forEach((row) => {
+        if (!Array.isArray(row) || row.length === 0) return;
+
+        const rawTime = headerMap.time != null ? row[headerMap.time] : row[0];
+        const time = String(rawTime ?? '').split(' ')[0];
+        const posId = parseInt(
+          headerMap.id != null ? row[headerMap.id] : row[1],
+          10
+        );
+        const symbol = String(headerMap.symbol != null ? row[headerMap.symbol] : row[2] ?? '').trim();
+        const type = String(headerMap.type != null ? row[headerMap.type] : row[3] ?? '').trim().toLowerCase();
+        const volume = parseNumeric(headerMap.volume != null ? row[headerMap.volume] : row[4]);
+        const profit = parseNumeric(headerMap.profit != null ? row[headerMap.profit] : row[12]);
 
         if (!Number.isNaN(posId) && symbol && (type === 'buy' || type === 'sell') && !Number.isNaN(profit)) {
           if (!existingIds.has(posId)) {
@@ -557,7 +615,7 @@ const App = () => {
               <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center">
                 <FileText className="w-6 h-6 text-slate-400 mx-auto mb-2" />
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                  Upload your MT5 "ReportHistory" CSV to sync latest results and avoid manual entry.
+                    Upload your MT5 "ReportHistory" export (CSV or XLSX) and the app will detect the right columns for your trades.
                 </p>
               </div>
             </div>
