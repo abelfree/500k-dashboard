@@ -28,6 +28,7 @@ import {
   FileText,
 } from 'lucide-react';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
 
 const STARTING_CAPITAL = 500.0;
@@ -205,6 +206,26 @@ const App = () => {
     });
   }, [challengeTitle, startingCapital, targetCapital, tradeHistory]);
 
+  const parseFileRows = async (file) => {
+    const isExcel = /\.(xls|xlsx)$/i.test(file.name);
+
+    if (isExcel) {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      return XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
+    }
+
+    return new Promise((resolve, reject) => {
+      Papa.parse(file, {
+        header: false,
+        complete: (results) => resolve(results.data),
+        error: (err) => reject(err),
+      });
+    });
+  };
+
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -212,51 +233,47 @@ const App = () => {
     setIsImporting(true);
     setImportStatus('Processing file...');
 
-    Papa.parse(file, {
-      header: false,
-      complete: async (results) => {
-        const rows = results.data;
-        const existingIds = new Set(tradeHistory.map((t) => t.id));
-        const newTrades = [];
-        let skipped = 0;
+    try {
+      const rows = await parseFileRows(file);
+      const existingIds = new Set(tradeHistory.map((t) => t.id));
+      const newTrades = [];
+      let skipped = 0;
 
-        rows.forEach((row) => {
-          const posId = parseInt(row[1], 10);
-          const symbol = row[2];
-          const type = row[3]?.toLowerCase();
-          const volume = parseFloat(row[4]);
-          const profit = parseFloat(row[12]);
-          const time = row[0] ? row[0].split(' ')[0] : '';
+      rows.forEach((row) => {
+        const rawTime = row[0] != null ? String(row[0]) : '';
+        const time = rawTime.split(' ')[0];
+        const posId = parseInt(row[1], 10);
+        const symbol = row[2];
+        const type = row[3]?.toLowerCase();
+        const volume = parseFloat(row[4]);
+        const profit = parseFloat(row[12]);
 
-          if (!Number.isNaN(posId) && symbol && (type === 'buy' || type === 'sell') && !Number.isNaN(profit)) {
-            if (!existingIds.has(posId)) {
-              newTrades.push({ id: posId, symbol, type, volume, profit, time });
-            } else {
-              skipped += 1;
-            }
-          }
-        });
-
-        if (newTrades.length > 0) {
-          const { error } = await supabase.from('trades').insert(newTrades);
-          if (error) {
-            setImportStatus(`Supabase insert failed: ${error.message}`);
+        if (!Number.isNaN(posId) && symbol && (type === 'buy' || type === 'sell') && !Number.isNaN(profit)) {
+          if (!existingIds.has(posId)) {
+            newTrades.push({ id: posId, symbol, type, volume, profit, time });
           } else {
-            setTradeHistory((prev) => [...prev, ...newTrades].sort((a, b) => a.id - b.id));
-            setImportStatus(`Added ${newTrades.length} new trades. Skipped ${skipped} duplicates.`);
+            skipped += 1;
           }
-        } else {
-          setImportStatus(`No new trades found. Skipped ${skipped} duplicates or malformed rows.`);
         }
+      });
 
-        setIsImporting(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      },
-      error: (err) => {
-        setImportStatus('Error reading file: ' + err.message);
-        setIsImporting(false);
-      },
-    });
+      if (newTrades.length > 0) {
+        const { error } = await supabase.from('trades').insert(newTrades);
+        if (error) {
+          setImportStatus(`Supabase insert failed: ${error.message}`);
+        } else {
+          setTradeHistory((prev) => [...prev, ...newTrades].sort((a, b) => a.id - b.id));
+          setImportStatus(`Added ${newTrades.length} new trades. Skipped ${skipped} duplicates.`);
+        }
+      } else {
+        setImportStatus(`No new trades found. Skipped ${skipped} duplicates or malformed rows.`);
+      }
+    } catch (err) {
+      setImportStatus('Error reading file: ' + (err?.message || 'Unable to parse file.'));
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const metrics = useMemo(() => {
@@ -358,7 +375,7 @@ const App = () => {
                 ref={fileInputRef}
                 onChange={handleFileUpload}
                 className="hidden"
-                accept=".csv"
+                accept=".csv,.xls,.xlsx"
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
